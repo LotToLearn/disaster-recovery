@@ -43,10 +43,19 @@ Otherwise, contact your DBA
 ## Setting up connectivity between source and target
 In order to allow cross connection between our two databases, we're going to have to add entries to both tnsnames.ora in $ORACLE_HOME/network/admin. Go ahead and cat the tnsnames.ora, and you can get an idea of what it looks like.
 
+**On source**
 ```
 $ cat $ORACLE_HOME/network/admin/tnsnames.ora
 ```
-![](./screenshots/###screenshots/cat_tns_src.png)
+![](./screenshots/NOAHscreenshots/cat_tns_src.png)
+
+**On target**
+```
+$ cat $ORACLE_HOME/network/admin/tnsnames.ora
+```
+![](./screenshots/NOAHscreenshots/cat_tns_trgt.png)
+
+
 
 
 [Top](#Table-of-Contents)
