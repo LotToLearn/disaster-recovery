@@ -4,8 +4,8 @@ Manual Active Oracle Data Guard
 
 # Table of Contents
 * [Assumptions](#assumptions)
-* [Preparing Primary Source database](#Preparing-primary-source-database)-database)
-* [Preparing Standby Target database](#Preparing-standby-target-database)-database)
+* [Preparing Primary Source database](#Preparing-primary-source-database-database)
+* [Preparing Standby Target database](#Preparing-standby-target-database-database)
 * [Setting up connectivity](#setting-up-connectivity)
 
 <!-- ASSUMPTIONS SECTION START -->
@@ -183,15 +183,66 @@ This is going to be a big file, but grab these parameters for later -:
 
 A quick way to grab these parameters it to do this -:
 ```
-grep -E '(\*\.compatible.*)|(\*\.open_cursors.*)|(\*\.pga_aggregate_target.*)|(\*\.sga_target.*)|(\*\..*undo_tablespace.*)|(\*\.enable_pluggable_database.*)|(\*\.db_files.*)|(\*\.db_recovery_file_dest_size.*)|(\*\.log_archive_max_processes.*)' /tmp/grabbing.ora
+$ grep -E '(\*\.compatible.*)|(\*\.open_cursors.*)|(\*\.pga_aggregate_target.*)|(\*\.sga_target.*)|(\*\..*undo_tablespace.*)|(\*\.enable_pluggable_database.*)|(\*\.db_files.*)|(\*\.db_recovery_file_dest_size.*)|(\*\.log_archive_max_processes.*)' /tmp/grabbing.ora
 ```
 ![](./screenshots/NOAHscreenshots/src_grep_params.png)
 
 ***NOW SAVE THESE FOR STEP Grabbing source parameters for our target (standby) pfile***
 
-# Preparing Standby Target database
-Make sure you're on the TARGET (STANDBY) Database
+[Top](#Table-of-Contents)
+<!-- SOURCE PREP SECTION END -->
+<!-- SOURCE PREP SECTION END -->
+<!-- SOURCE PREP SECTION END -->
 
+
+<!-- =========================================================================================== -->
+
+<!-- TARGET PREP SECTION START -->
+<!-- TARGET PREP SECTION START -->
+<!-- TARGET PREP SECTION START -->
+
+# Preparing Standby Target database
+
+#### Copying wallet and password file to standby
+This is pretty straight forward, just copy the files from your NFS, Desktop, or /tmp/ folder into their correct places.
+
+**Wallet**
+
+First, grab the location of your target wallet
+```
+$ sed '/ORACLE_UNQNAME/{s/\(.*ORACLE_UNQNAME\).*/\1/;q}' $ORACLE_HOME/network/admin/sqlnet.ora | sed 's/.*=//'
+```
+![](./screenshots/NOAHscreenshots/sed_wallet.png)
+
+Now, we're going to go to that directory and backup everything so it's empty.
+```
+$ cd /opt/oracle/dcs/commonstore/wallets/tde/$ORACLE_UNQNAME
+$ ls -ltr | wc -l
+$ mkdir -m 777 /tmp/wallet_bak
+$ mv * /tmp/wallet_bak
+$ ls -ltr | wc -l
+```
+The final wc -l should just be 1
+
+![](./screenshots/NOAHscreenshots/wallet_clearing.png)
+
+Now, we're going to copy the ***WALLET*** files from our NFS. If you used SFTP then copy from desktop. If you used SCP copy from the /tmp/ directory.
+```
+$ cd /opt/oracle/dcs/commonstore/wallets/tde/$ORACLE_UNQNAME
+$ cp /ATX/NOAH/DG_WALLET/orapw{target_sid} .
+```
+![](./screenshots/NOAHscreenshots/nfs_wallet_copy.png)
+
+**Password file**
+
+```
+$ cd $ORACLE_HOME/dbs
+$ mv orapw{target_sid} BACKUP_orapw{target_sid}
+$ cp /ATX/NOAH/DG_WALLET/
+$ ls -ltr *orapw*
+```
+
+![](./screenshots/NOAHscreenshots/trgt_orapwcpy.png)
 #### Grabbing source parameters for our target (standby) pfile
 We need to create a pfile that we can use to startup our empty target (standby) database. To do this, go to the ***TARGET (STANDBY)*** database.
 ```
@@ -233,9 +284,9 @@ Now, edit the below to fit your parameters and then paste it into the init{targe
 
 
 [Top](#Table-of-Contents)
-<!-- SOURCE PREP SECTION END -->
-<!-- SOURCE PREP SECTION END -->
-<!-- SOURCE PREP SECTION END -->
+<!-- TARGET PREP SECTION END -->
+<!-- TARGET PREP SECTION END -->
+<!-- TARGET PREP SECTION END -->
 
 <!-- =========================================================================================== -->
 
