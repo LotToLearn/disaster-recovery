@@ -46,6 +46,7 @@ SQL> select log_mode from v$database;
 ```
 ![](./screenshots/NOAHscreenshots/src_is_arch.png)
 
+#### Editing source Parameters
 Next, we need to enable force logging and flashback on parameters. The parameters may already be enabled, which will give you an error -- but that's okay.
 ```
 $ sqlplus / as sysdba
@@ -71,6 +72,9 @@ ALTER SYSTEM SET fal_server=target_unqname scope=both;
 ALTER SYSTEM SET STANDBY_FILE_MANAGEMENT=AUTO;
 ```
 ![](./screenshots/NOAHscreenshots/src_change_params.png)
+
+#### Copying source wallet directory, and password files
+By default, OCI encrypts the Database. This means we have to copy both the password file, as well as the contents of the wallet directory from our Source database, and add it to our target database. I am going to copy it to a shared NFS between the two servers. There's other ways like WinSCP, or using Linux Secure Copy (scp).
 
 <!-- ASSUMPTIONS SECTION END -->
 <!-- =========================================================================================== -->
