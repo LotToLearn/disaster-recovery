@@ -2,25 +2,31 @@ Manual Active Oracle Data Guard
 =======================================================
 
 
-## Table of Contents
+# Table of Contents
 * [Assumptions](#assumptions)
-* [Setting up connectivity](#setting_up_connectivity)
-
+* [Preparing source (PRIMARY) database](#Preparing-source-(PRIMARY)-database)
+* [Preparing target (STANDBY) database](#Preparing-target-(STANDBY)-database)
+* [Setting up connectivity](#setting-up-connectivity)
 
 <!-- ASSUMPTIONS SECTION START -->
-## Assumptions
+<!-- ASSUMPTIONS SECTION START -->
+<!-- ASSUMPTIONS SECTION START -->
+# Assumptions
 1. **Source** is Oracle Database 12c EE High Perf Release 12.2.0.1.0 - 64bit Production.
 2. **Target** has Oracle Database 12c EE High Perf Release 12.2.0.1.0 - 64bit Production **binaries**.
 3. If using OCI, both databases have appropriate security lists that can allow communication both ways.
 4. You have the correct password for the SYS user on the source database.
 5. Both Oracle environments have been set with .oraenv
+6. A NFS shared between the two servers ([Learn how to make an NFS on OCI](https://docs.cloud.oracle.com/en-us/iaas/Content/File/Tasks/creatingfilesystems.htm))
 
-#### Source Information
+
+
+#### Source (PRIMARY) Information
 1. ORACLE_SID = NOAHONE
 2. ORACLE_UNQNAME = ***NOAHONE_iad2b7***
 
-#### Target Information
-1. ORACLE_SID = NOAHONE
+#### Target (STANDBY) Information
+1. ORACLE_SID = NOAHDR
 2. ORACLE_UNQNAME = ***NOAHDR_iad38f***
 
 #### What are binaries?
@@ -36,9 +42,17 @@ SQL> exit
 ```
 Otherwise, contact your DBA
 
-[Top](#Table-of-Contents)
+<!-- ASSUMPTIONS SECTION END -->
+<!-- ASSUMPTIONS SECTION END -->
+<!-- ASSUMPTIONS SECTION END -->
 
-## Preparing source database
+<!-- =========================================================================================== -->
+
+<!-- SOURCE PREP SECTION START -->
+<!-- SOURCE PREP SECTION START -->
+<!-- SOURCE PREP SECTION START -->
+
+# Preparing source (PRIMARY) database
 First thing, we need to make sure our source database is in ARCHIVELOG mode.
 ```
 $ sqlplus / as sysdba
@@ -46,7 +60,7 @@ SQL> select log_mode from v$database;
 ```
 ![](./screenshots/NOAHscreenshots/src_is_arch.png)
 
-#### Editing source Parameters
+#### Editing source (PRIMARY) Parameters
 Next, we need to enable force logging and flashback on parameters. The parameters may already be enabled, which will give you an error -- but that's okay.
 ```
 $ sqlplus / as sysdba
@@ -73,13 +87,94 @@ ALTER SYSTEM SET STANDBY_FILE_MANAGEMENT=AUTO;
 ```
 ![](./screenshots/NOAHscreenshots/src_change_params.png)
 
-#### Copying source wallet directory, and password files
+#### Copying source (PRIMARY) wallet directory, and password files
 By default, OCI encrypts the Database. This means we have to copy both the password file, as well as the contents of the wallet directory from our Source database, and add it to our target database. I am going to copy it to a shared NFS between the two servers. There's other ways like WinSCP, or using Linux Secure Copy (scp).
 
-<!-- ASSUMPTIONS SECTION END -->
+**How to get the wallet**
+```
+$ sqlplus / as sysdba
+SQL> set lines 200
+SQL> col WRL_PARAMETER format a60
+SQK> col WRL_TYPE format a10
+SQL> col status format a10
+SQL> select * from v$encryption_wallet;
+```
+![](./screenshots/NOAHscreenshots/find_src_wallet.png)
+
+Now, I'm going to put the wallet contents into my NFS. You can either do this, SFTP them to your desktop, or scp them to the standby database in /tmp/ for now.
+```
+$ cd /opt/oracle/dcs/commonstore/wallets/tde/source_unqname/
+$ mkdir -m 777 /ATX/NOAH/DG_WALLET
+$ cp * /ATX/NOAH/DG_WALLET
+```
+![](./screenshots/NOAHscreenshots/wallet_saved_src.png)
+
+**How to get the password file**
+```
+$ cd $ORACLE_HOME/dbs
+$ cp orapw{source_sid} /ATX/NOAH/DG_WALLET/orapw{target_sid}
+```
+![](./screenshots/NOAHscreenshots/ora_pw_src_cp.png)
+
+#### Adding standby redo logs on source (PRIMARY) database
+You need to create standby redo logs on your source for maximum protection. Without creating standby logs, the standby will apply archived logs once they are created by RFS. Since standby cannot apply incomplete archive logs, you can see where the issue arises. [Learn more about it here](https://dbaclass.com/article/standby-redologs-oracle-dataguard/)
+
+**First, check how many current redo logs you have on source (PRIMARY)**
+```
+$ sqlplus / as sysdba
+$ set lines 180
+$ col MEMBER for a60
+$ select b.thread#, a.group#, a.member, b.bytes FROM v$logfile a, v$log b WHERE a.group# = b.group#;
+```
+![](./screenshots/NOAHscreenshots/src_logfiles.png)
+
+Now, in our case our thread (node) 1 has three redo logs (group 1,2,3). Usually your database will have a lot more, with multiple threads and unique groups. Now, we need to add standby logs to the source. We're going to add all of the current log count plus one in each group. So in our case, 3+1 = 4 total standby redo logs will be added (for thread 1)
+
+**Steps to add standby logs**
+
+Guidelines -:
+  1. You cannot overlap groups (example if you have a redo log in group 1, you cannot add a standby log in group 1).
+  2. You determine to amount of standby redo logs to add by taking the current redo log count, and adding one ***for each thread.***
+  3. The standby redo logs must match the redo log size.
+  4. Usually logs are added to the +RECO directory, but that is decided by the DBA. A lot of DBAs like keeping them seperate, so in our case it would go in +DATA.
+
+Commands to add standby redo logs -:
+
+```
+$ sqlplus / as sysdba
+SQL> alter database add standby logfile thread 1 group 4 ('+DATA','+RECO') size 1G;
+SQL> alter database add standby logfile thread 1 group 5 ('+DATA','+RECO') size 1G;
+SQL> alter database add standby logfile thread 1 group 6 ('+DATA','+RECO') size 1G;
+SQL> alter database add standby logfile thread 1 group 7 ('+DATA','+RECO') size 1G;
+```
+![](./screenshots/NOAHscreenshots/src_redo_add.png)
+
+Check if they were added successfully (remember I multiplexed) -:
+```
+$ sqlplus / as sysdba
+SQL> set lines 180
+SQL> col MEMBER for a60
+SQL> select b.thread#, a.group#, a.member, b.bytes FROM v$logfile a, v$standby_log b WHERE a.group# = b.group#;
+```
+![](./screenshots/NOAHscreenshots/src_redo_add_success.png)
+
+[Top](#Table-of-Contents)
+<!-- SOURCE PREP SECTION END -->
+<!-- SOURCE PREP SECTION END -->
+<!-- SOURCE PREP SECTION END -->
+
 <!-- =========================================================================================== -->
+
 <!-- CONNECTIVITY SECTION START -->
-## Setting up connectivity between source and target
+<!-- CONNECTIVITY SECTION START -->
+<!-- CONNECTIVITY SECTION START -->
+
+
+
+
+
+<!-- WIP
+# Setting up connectivity between source and target
 In order to allow cross connection between our two databases, we're going to have to add entries to both tnsnames.ora in $ORACLE_HOME/network/admin. Go ahead and cat the tnsnames.ora, and you can get an idea of what it looks like.
 
 SOURCE
@@ -125,3 +220,7 @@ sqlplus sys/[password]@[target_unqname] as sysdba
 ![](./screenshots/NOAHscreenshots/src_db_con_trgt.png)
 [Top](#Table-of-Contents)
 <!-- CONNECTIVITY SECTION END -->
+<!-- CONNECTIVITY SECTION END -->
+<!-- CONNECTIVITY SECTION END -->
+
+<!-- =========================================================================================== -->
