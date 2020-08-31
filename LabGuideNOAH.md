@@ -4,8 +4,8 @@ Manual Active Oracle Data Guard
 
 # Table of Contents
 * [Assumptions](#assumptions)
-* [Preparing source (PRIMARY) database](#Preparing-source-(PRIMARY)-database)
-* [Preparing target (STANDBY) database](#Preparing-target-(STANDBY)-database)
+* [Preparing Primary Source database](#Preparing-primary-source-database)-database)
+* [Preparing Standby Target database](#Preparing-standby-target-database)-database)
 * [Setting up connectivity](#setting-up-connectivity)
 
 <!-- ASSUMPTIONS SECTION START -->
@@ -52,7 +52,7 @@ Otherwise, contact your DBA
 <!-- SOURCE PREP SECTION START -->
 <!-- SOURCE PREP SECTION START -->
 
-# Preparing source (PRIMARY) database
+# Preparing Primary Source database
 First thing, we need to make sure our source database is in ARCHIVELOG mode.
 ```
 $ sqlplus / as sysdba
@@ -60,7 +60,7 @@ SQL> select log_mode from v$database;
 ```
 ![](./screenshots/NOAHscreenshots/src_is_arch.png)
 
-#### Editing source (PRIMARY) Parameters
+#### Editing source Parameters
 Next, we need to enable force logging and flashback on parameters. The parameters may already be enabled, which will give you an error -- but that's okay.
 ```
 $ sqlplus / as sysdba
@@ -87,7 +87,7 @@ ALTER SYSTEM SET STANDBY_FILE_MANAGEMENT=AUTO;
 ```
 ![](./screenshots/NOAHscreenshots/src_change_params.png)
 
-#### Copying source (PRIMARY) wallet directory, and password files
+#### Copying source wallet directory, and password files
 By default, OCI encrypts the Database. This means we have to copy both the password file, as well as the contents of the wallet directory from our Source database, and add it to our target database. I am going to copy it to a shared NFS between the two servers. There's other ways like WinSCP, or using Linux Secure Copy (scp).
 
 **How to get the wallet**
@@ -116,10 +116,10 @@ $ cp orapw{source_sid} /ATX/NOAH/DG_WALLET/orapw{target_sid}
 ```
 ![](./screenshots/NOAHscreenshots/ora_pw_src_cp.png)
 
-#### Adding standby redo logs on source (PRIMARY) database
+#### Adding standby redo logs on source database
 You need to create standby redo logs on your source for maximum protection. Without creating standby logs, the standby will apply archived logs once they are created by RFS. Since standby cannot apply incomplete archive logs, you can see where the issue arises. [Learn more about it here](https://dbaclass.com/article/standby-redologs-oracle-dataguard/)
 
-**First, check how many current redo logs you have on source (PRIMARY)**
+**First, check how many current redo logs you have on source**
 ```
 $ sqlplus / as sysdba
 $ set lines 180
@@ -157,6 +157,80 @@ SQL> col MEMBER for a60
 SQL> select b.thread#, a.group#, a.member, b.bytes FROM v$logfile a, v$standby_log b WHERE a.group# = b.group#;
 ```
 ![](./screenshots/NOAHscreenshots/src_redo_add_success.png)
+
+#### Grabbing source parameters for our target (standby) pfile
+Last thing, we need to create a pfile from spfile on source (PRIMARY) and grab some of the parameters for our target (STANDBY) pfile.
+
+```
+$ sqlplus / as sysdba
+SQL> create pfile='/tmp/grabbing.ora' from spfile;
+SQL> exit
+cat /tmp/grabbing.ora
+```
+![](./screenshots/NOAHscreenshots/src_spfile_grabbingparams.png)
+
+This is going to be a big file, but grab these parameters for later -:
+```
+*.compatible
+*.db_files
+.db_recovery_file_dest_size=255g
+*.open_cursors
+*.pga_aggregate_target
+*.sga_target
+*.undo_tablespace (note -: you may have more than one undo, note them all)
+*.enable_pluggable_database
+```
+
+A quick way to grab these parameters it to do this -:
+```
+grep -E '(\*\.compatible.*)|(\*\.open_cursors.*)|(\*\.pga_aggregate_target.*)|(\*\.sga_target.*)|(\*\..*undo_tablespace.*)|(\*\.enable_pluggable_database.*)|(\*\.db_files.*)|(\*\.db_recovery_file_dest_size.*)|(\*\.log_archive_max_processes.*)' /tmp/grabbing.ora
+```
+![](./screenshots/NOAHscreenshots/src_grep_params.png)
+
+***NOW SAVE THESE FOR STEP Grabbing source parameters for our target (standby) pfile***
+
+# Preparing Standby Target database
+Make sure you're on the TARGET (STANDBY) Database
+
+#### Grabbing source parameters for our target (standby) pfile
+We need to create a pfile that we can use to startup our empty target (standby) database. To do this, go to the ***TARGET (STANDBY)*** database.
+```
+$ cd $ORACLE_HOME/dbs
+$ vi init{target_sid}.ora
+```
+
+Now, edit the below to fit your parameters and then paste it into the init{target_sid}.ora file, then save and exit the vi editor. ***Don't forget your parameters you grabbed above*** also, don't forget about the **apostrophes  ' '** in some of the parameters.
+```
+*.audit_file_dest='/u01/app/oracle/admin/target_unqname/adump'
+*.audit_trail='db'
+*.enable_pluggable_database={grabbed from /tmp/grabbing.ora on source}
+*.compatible='{grabbed from /tmp/grabbing.ora on source}'
+#*.control_files='+DATA/target_unqname/controlfile/current.268.900456457'
+*.db_block_size=8192
+*.db_create_file_dest='+DATA'
+*.db_name='source_sid'
+*.db_unique_name='target_unqname'
+*.db_recovery_file_dest='+RECO'
+*.db_recovery_file_dest_size={grabbed from /tmp/grabbing.ora on source}
+*.diagnostic_dest='/u01/app/oracle'
+*.fal_client='target_unqname'
+*.fal_server='source_unqname'
+*.log_archive_config='DG_CONFIG=(target_unqname,source_unqname)'
+*.log_archive_dest_1='location=USE_DB_RECOVERY_FILE_DEST'
+*.log_archive_dest_2='SERVICE=source_unqname LGWR ASYNC VALID_FOR=(ONLINE_LOGFILES,PRIMARY_ROLE) DB_UNIQUE_NAME=source_unqname'
+*.log_archive_dest_state_1='ENABLE'
+*.log_archive_dest_state_2='DEFER'
+*.log_archive_format='%t_%s_%r.dbf'
+*.log_archive_max_processes=30
+*.open_cursors={grabbed from /tmp/grabbing.ora on source}
+*.remote_login_passwordfile='EXCLUSIVE'
+*.standby_file_management='AUTO'
+*.undo_tablespace='{grabbed from /tmp/grabbing.ora on source}'
+*.log_file_name_convert='+RECO/source_unqname/ONLINELOG','+RECO/target_unqname/ONLINELOG'
+*.log_file_name_convert='+DATA/source_unqname/ONLINELOG','+DATA/target_unqname/ONLINELOG'
+*.db_file_name_convert='+DATA/source_unqname/DATAFILE','+DATA/target_unqname/DATAFILE'
+```
+
 
 [Top](#Table-of-Contents)
 <!-- SOURCE PREP SECTION END -->
