@@ -9,6 +9,9 @@ Manual Active Oracle Data Guard
 * [Setting up connectivity](#conn-setup)
 * [Running active duplicate from primary](#rman-dupe)
 * [Post active duplication steps](#rman-post-dupe)
+  * [Starting MRP](#rman-mrp)
+  * [Verifying log shipment](#rman-logs)
+* [Making sure data is being replicated](#data-replication)
 
 <!-- ASSUMPTIONS SECTION START -->
 <!-- ASSUMPTIONS SECTION START -->
@@ -479,8 +482,75 @@ Once you see this, it is done... You'll now need to do some more work to finish 
 <!-- POST DUPLICATION SECTION START -->
 <a name="rman-post-dupe"></a>
 # Post active duplication steps
+<a name="rman-mrp"></a>
+#### Starting MRP (ON THE TARGET (STANDBY) DATABASE!!!!)
+Now that the duplication is done, we have to start MRP. MRP is just a tool that applies information from the redo logs to the standby database. It basically just syncs it up, and keeps it in sync while it's running.
+
+Check the status of the **standby** it should be mounted, and have a role of Physical Standby.
+```
+$ sqlplus / as sysdba
+SQL> select name, open_mode, database_role, INSTANCE_NAME from v$database,v$instance;
+```
+![](./screenshots/NOAHscreenshots/mount_ps.png)
+
+Now we're going to open it up, and start MRP. You can also run the prep command in order to see if MRP is running or not, to periodically check and confirm.
+```
+$ sqlplus / as sysdba
+SQL> alter database open;
+SQL> select name, open_mode, database_role, INSTANCE_NAME from v$database,v$instance;
+SQL> alter database recover managed standby database disconnect from session;
+SQL> select name, open_mode, database_role, INSTANCE_NAME from v$database,v$instance;
+SQL> !ps -ef | grep mrp
+```
+![](./screenshots/NOAHscreenshots/mrp_is_on.png)
+
+<a name="rman-logs"></a>
+#### Verifying log shipment from primary to standby
+First, go to the primary database and then we're going to do some log switches, and grab the sequence number that is writing on the primary. The standby should then be receiving and applying that sequence number.
+
+***ON SOURCE***
+```
+$ sqlplus / as sysdba
+SQL> alter system switch logfile;
+SQL> alter system switch logfile;
+SQL> alter system switch logfile;
+SQL> set lines 200
+SQL> select process,status,client_process,group#,thread#,sequence# from  V$MANAGED_STANDBY order by sequence#;
+```
+![](./screenshots/NOAHscreenshots/src_switch.png)
+
+***ON TARGET***
+The sequence # that was writing should now be receiving / applying.
+```
+$ sqlplus / as sysdba
+SQL> set lines 200
+SQL> select process,status,client_process,group#,thread#,sequence# from  V$MANAGED_STANDBY order by sequence#;
+```
+![](./screenshots/NOAHscreenshots/trgt_switch.png)
+
+You can also check the alert log, by looking for sequence numbers that are in transit.
+```
+$ cd cd $ORACLE_BASE/diag/rdbms/{target_unqname_lowercase}/{target_sid}/trace
+$ tail -30 alert_{target_sid}.log
+```
+![](./screenshots/NOAHscreenshots/trgt_switch_alertlog.png)
 
 [Top](#Table-of-Contents)
 <!-- POST DUPLICATION SECTION END -->
 <!-- POST DUPLICATION SECTION END -->
 <!-- POST DUPLICATION SECTION END -->
+
+<!-- =========================================================================================== -->
+
+<!-- Making sure data is replicated SECTION START -->
+<!-- Making sure data is replicated SECTION START -->
+<!-- Making sure data is replicated SECTION START -->
+<a name="data-replication"></a>
+# Making sure data is being replicated
+
+[Top](#Table-of-Contents)
+<!-- Making sure data is replicated SECTION END -->
+<!-- Making sure data is replicated SECTION END -->
+<!-- Making sure data is replicated SECTION END -->
+
+<!-- =========================================================================================== -->
