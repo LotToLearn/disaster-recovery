@@ -7,6 +7,8 @@ Manual Active Oracle Data Guard
 * [Preparing Standby (Target) database](#target-prep)
   * [Creating our STANDBY pfile](#pfile_create)
 * [Setting up connectivity](#conn-setup)
+* [Running active duplicate from primary](#rman-dupe)
+* [Post active duplication steps](#rman-post-dupe)
 
 <!-- ASSUMPTIONS SECTION START -->
 <!-- ASSUMPTIONS SECTION START -->
@@ -339,8 +341,39 @@ Now, edit the below to fit your parameters and then paste it into the init{targe
 Don't forget to save and exit VI (:x or :wq), and make sure there are no extra lines or missing apostrophes!
 ![](./screenshots/NOAHscreenshots/trgt_initfile.png)
 
-#### Starting up the shell standby database with our created PFILE
-This is where it can get annoying, but Oracle's error handling
+#### Testing pfile, and creating spfile
+This is where it can get annoying, but Oracle's error handling is pretty good. We're going to use the pfile we just created to startup the database in nomount. We are then going to create an spfile into our ASM data directory from the pfile.
+
+To startup the database with our pfile -:
+```
+$ sqlplus / as sysdba
+SQL> startup nomount pfile='$ORACLE_HOME/dbs/init{target_sid}.ora';
+```
+![](./screenshots/NOAHscreenshots/pfile_startup.png)
+
+Now, create a spfile from this pfile. We do this so everytime we start up the database, it's going to use the spfile. That's why we "test" the pfile first before converting it, to make sure it'll work.
+```
+SQL> create spfile='+{asm_data}/{target_unqname}/spfile{target_sid}.ora' from pfile='$ORACLE_HOME/dbs/init{target_sid}.ora';
+SQL> startup nomount force;
+SQL> show parameter spfile;
+```
+![](./screenshots/NOAHscreenshots/spfile_created.png)
+
+Now, we know that it works. Take the result from "show parameter spfile" and copy it for our next step. We're now going to edit the pfile we originally made, and remove everything. All we're going to have in the pfile is a reference to the "show parameter spfile". We're also going to backup the pfile we made, just incase we need to use it later for troubleshooting.
+
+Backup our pfile we made -:
+```
+$ cd $ORACLE_HOME/dbs
+$ mv init{target_sid}.ora RECOVERY_init{target_sid}.ora
+```
+![](./screenshots/NOAHscreenshots/init_RECO_mv.png)
+
+Now, created a pfile named init{target_sid}.ora, and add the one line, screenshot below.
+```
+$ vi init{target_sid}.ora
+(add your show parameter spfile)
+```
+![](./screenshots/NOAHscreenshots/spfile_in_pfile.png)
 
 [Top](#Table-of-Contents)
 <!-- TARGET PREP SECTION END -->
@@ -353,8 +386,6 @@ This is where it can get annoying, but Oracle's error handling
 <!-- CONNECTIVITY SECTION START -->
 <!-- CONNECTIVITY SECTION START -->
 
-
-<!-- WIP
 <a name="conn-setup"></a>
 # Setting up connectivity between source and target
 In order to allow cross connection between our two databases, we're going to have to add entries to both tnsnames.ora in $ORACLE_HOME/network/admin. Go ahead and cat the tnsnames.ora, and you can get an idea of what it looks like.
@@ -387,22 +418,69 @@ TARGET
 ![](./screenshots/NOAHscreenshots/trgt_tns_add_src.png)
 
 #### Testing database connectivity
-TARGET
+##### TESTING CONNECTIVITY FROM TARGET (STANDBY) TO SOURCE (PRIMARY)!!!!
+***AKA, MAKE SURE YOU'RE RUNNING THIS ONE ON THE TARGET DATABASE***
 ```
 sqlplus sys/[password]@[source_unqname] as sysdba
 ```
+![](./screenshots/NOAHscreenshots/trgt_2_src.png)
 
-Now, after you can connect to the source let's go ahead and bring up the shell database in nomount
-![](./screenshots/NOAHscreenshots/src_db_con_trgt.png)
-
-SOURCE
+##### TESTING CONNECTIVITY FROM SOURCE (PRIMARY) TO TARGET (STANDBY)!!!!
+***AKA, MAKE SURE YOU'RE RUNNING THIS ONE ON THE SOURCE DATABASE***
 ```
 sqlplus sys/[password]@[target_unqname] as sysdba
 ```
-![](./screenshots/NOAHscreenshots/src_db_con_trgt.png)
+![](./screenshots/NOAHscreenshots/src_2_trgt.png)
+
+If you can connect, configurations... you're really close! If not, it's always going to be something with networking, which means it can be your listener or OCI security lists.
+
+[Information on the Oracle listener](https://docs.oracle.com/cd/B19306_01/network.102/b14212/connect.htm)
+
+[Information on OCI security lists](https://docs.cloud.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm)
+
 [Top](#Table-of-Contents)
 <!-- CONNECTIVITY SECTION END -->
 <!-- CONNECTIVITY SECTION END -->
 <!-- CONNECTIVITY SECTION END -->
 
 <!-- =========================================================================================== -->
+
+<!-- DUPLICATION SECTION START -->
+<!-- DUPLICATION SECTION START -->
+<!-- DUPLICATION SECTION START -->
+<a name="rman-dupe"></a>
+# Running active duplicate from primary
+### Make sure you're on the SOURCE (PRIMARY) database!!
+You may see "target" and get confused, but just follow the syntax. Basically, you target into your current source database and then set the target as your auxiliary all in this one liner.
+```
+$ rman target sys/[password]@[source_unqname] auxiliary sys/[password]@[target_unqname]
+```
+![](./screenshots/NOAHscreenshots/rman_target_aux.png)
+
+Now, just run this command and it'll duplicate to the standby. If it fails, Oracle has pretty good error handling and will give you specifics. This will take some time depending on your database size, in a lab environment it will run rather quick since you don't have much data. If this is a big database though, I would recommend making a .sh script with the rman connect string, and a run code block with the command below. Then nohup ./ the script, then tail the nohup. This makes it run in the background.
+```
+RMAN> duplicate target database for standby from active database nofilenamecheck;
+```
+![](./screenshots/NOAHscreenshots/dup_kickoff.png)
+![](./screenshots/NOAHscreenshots/dup_progress.png)
+
+Once you see this, it is done... You'll now need to do some more work to finish everything up
+![](./screenshots/NOAHscreenshots/dup_done.png)
+
+[Top](#Table-of-Contents)
+<!-- DUPLICATION SECTION END -->
+<!-- DUPLICATION SECTION END -->
+<!-- DUPLICATION SECTION END -->
+
+<!-- =========================================================================================== -->
+
+<!-- POST DUPLICATION SECTION START -->
+<!-- POST DUPLICATION SECTION START -->
+<!-- POST DUPLICATION SECTION START -->
+<a name="rman-post-dupe"></a>
+# Post active duplication steps
+
+[Top](#Table-of-Contents)
+<!-- POST DUPLICATION SECTION END -->
+<!-- POST DUPLICATION SECTION END -->
+<!-- POST DUPLICATION SECTION END -->
