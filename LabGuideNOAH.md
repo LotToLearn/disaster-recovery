@@ -173,21 +173,21 @@ This is going to be a big file, but grab these parameters for later -:
 ```
 *.compatible
 *.db_files
-.db_recovery_file_dest_size=255g
+*.db_recovery_file_dest_size
+*.enable_pluggable_database
 *.open_cursors
 *.pga_aggregate_target
 *.sga_target
 *.undo_tablespace (note -: you may have more than one undo, note them all)
-*.enable_pluggable_database
 ```
 
 A quick way to grab these parameters it to do this -:
 ```
-$ grep -E '(\*\.compatible.*)|(\*\.open_cursors.*)|(\*\.pga_aggregate_target.*)|(\*\.sga_target.*)|(\*\..*undo_tablespace.*)|(\*\.enable_pluggable_database.*)|(\*\.db_files.*)|(\*\.db_recovery_file_dest_size.*)|(\*\.log_archive_max_processes.*)' /tmp/grabbing.ora
+$ grep -E '(\*\.compatible.*)|(\*\.open_cursors.*)|(\*\.pga_aggregate_target.*)|(\*\.sga_target.*)|(\*\..*undo_tablespace.*)|(\*\.enable_pluggable_database.*)|(\*\.db_files.*)|(\*\.db_recovery_file_dest_size.*)' /tmp/grabbing.ora
 ```
 ![](./screenshots/NOAHscreenshots/src_grep_params.png)
 
-***NOW SAVE THESE FOR STEP Grabbing source parameters for our target (standby) pfile***
+***NOW SAVE THESE FOR STEP Creating our STANDBY pfile***
 
 [Top](#Table-of-Contents)
 <!-- SOURCE PREP SECTION END -->
@@ -243,22 +243,60 @@ $ ls -ltr *orapw*
 ```
 
 ![](./screenshots/NOAHscreenshots/trgt_orapwcpy.png)
-#### Grabbing source parameters for our target (standby) pfile
-We need to create a pfile that we can use to startup our empty target (standby) database. To do this, go to the ***TARGET (STANDBY)*** database.
+
+#### Creating an audit directory
+You need an audit directory, OCI creates one already for our database but you can create and directory and specify it in the pfile we're going to make below. Just note down the directory, in our case I'm going to use /u01/app/oracle/admin/NOAHDR_iad38f/adump. Since I already have it, I'll just show a screenshot of running ls on it.
+```
+$ mkdir -m 777 $ORACLE_BASE/admin/target_unqname/adump
+```
+![](./screenshots/NOAHscreenshots/audit_ls.png)
+
+***NOTE THE DIRECTORY DOWN YOU MADE, FOR FILLING IN THE STANDBY PFILE BELOW***
+
+#### Grabbing the DB domain
+Now, the last parameter we need to grab is the db_domain. If you're on OCI, and the two databases are in the same subnet you can just use the db_domain parameter on the source. There are a few ways to grab it regardless, so I'll show you that.
+
+**The best way is to just get the domain in the connect string and take out the DB_UNQNAME like so -:**
+```
+$ cat $ORACLE_HOME/network/admin/tnsnames.ora
+```
+Now, once you ran the cat you want to take ***THE CURRENT TARGET DATABASE ENTRY*** Look at the screenshot below for what I mean.
+![](./screenshots/NOAHscreenshots/find_db_domain_linux.png)
+
+So, our domain name is noahdbssubnet.iris.oraclevcn.com based off of this.
+
+**You can also run this Linux command**
+```
+$ hostname -A
+```
+![](./screenshots/NOAHscreenshots/linux_hostname_A.png)
+
+Same concept as above.
+
+**If on OCI, you can check on the instance details page**
+![](./screenshots/NOAHscreenshots/domain_OCI.png)
+
+***NOTE THE DOMAIN NAME, FOR FILLING IN THE STANDBY PFILE BELOW***
+
+#### Creating our STANDBY pfile
+We need to create a pfile that we can use to startup our empty target (standby) database. Make sure your are doing this on the ***TARGET (STANDBY)*** database. These are the steps -:
 ```
 $ cd $ORACLE_HOME/dbs
+$ mv init{target_sid}.ora OLD_init{target_sid}.ora
 $ vi init{target_sid}.ora
 ```
 
-Now, edit the below to fit your parameters and then paste it into the init{target_sid}.ora file, then save and exit the vi editor. ***Don't forget your parameters you grabbed above*** also, don't forget about the **apostrophes  ' '** in some of the parameters.
+Now, edit the below to fit your parameters and then paste it into the init{target_sid}.ora file, then save and exit the vi editor. ***Don't forget your parameters you grabbed above*** also, don't forget about the **apostrophes  ' '** in some of the parameters. Oracle is pretty specific with errors on trying to startup with a pfile, and it will let you know if there are missing apostrophes.
 ```
 *.audit_file_dest='/u01/app/oracle/admin/target_unqname/adump'
 *.audit_trail='db'
 *.enable_pluggable_database={grabbed from /tmp/grabbing.ora on source}
 *.compatible='{grabbed from /tmp/grabbing.ora on source}'
 #*.control_files='+DATA/target_unqname/controlfile/current.268.900456457'
+*.db_files={grabbed from /tmp/grabbing.ora on source}
 *.db_block_size=8192
 *.db_create_file_dest='+DATA'
+*.db_domain='{Grabbing the DB domain}'
 *.db_name='source_sid'
 *.db_unique_name='target_unqname'
 *.db_recovery_file_dest='+RECO'
@@ -272,8 +310,9 @@ Now, edit the below to fit your parameters and then paste it into the init{targe
 *.log_archive_dest_state_1='ENABLE'
 *.log_archive_dest_state_2='DEFER'
 *.log_archive_format='%t_%s_%r.dbf'
-*.log_archive_max_processes=30
 *.open_cursors={grabbed from /tmp/grabbing.ora on source}
+*.pga_aggregate_target={grabbed from /tmp/grabbing.ora on source}
+*.sga_target={grabbed from /tmp/grabbing.ora on source}
 *.remote_login_passwordfile='EXCLUSIVE'
 *.standby_file_management='AUTO'
 *.undo_tablespace='{grabbed from /tmp/grabbing.ora on source}'
@@ -282,6 +321,8 @@ Now, edit the below to fit your parameters and then paste it into the init{targe
 *.db_file_name_convert='+DATA/source_unqname/DATAFILE','+DATA/target_unqname/DATAFILE'
 ```
 
+Don't forget to save and exit VI (:x or :wq), and make sure there are no extra lines or missing apostrophes!
+![](./screenshots/NOAHscreenshots/trgt_initfile.png)
 
 [Top](#Table-of-Contents)
 <!-- TARGET PREP SECTION END -->
