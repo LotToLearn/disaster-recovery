@@ -1,16 +1,17 @@
 Manual Active Oracle Data Guard
 =======================================================
 
-
 # Table of Contents
-* [Assumptions](#assumptions)
-* [Preparing Primary Source database](#Preparing-primary-source-database-database)
-* [Preparing Standby Target database](#Preparing-standby-target-database-database)
-* [Setting up connectivity](#setting-up-connectivity)
+* [Assumptions](#Assumptions)
+* [Preparing Primary (Source) database](#primary-prep)
+* [Preparing Standby (Target) database](#target-prep)
+  * [Creating our STANDBY pfile](#pfile_create)
+* [Setting up connectivity](#conn-setup)
 
 <!-- ASSUMPTIONS SECTION START -->
 <!-- ASSUMPTIONS SECTION START -->
 <!-- ASSUMPTIONS SECTION START -->
+<a name="Assumptions"></a>
 # Assumptions
 1. **Source** is Oracle Database 12c EE High Perf Release 12.2.0.1.0 - 64bit Production.
 2. **Target** has Oracle Database 12c EE High Perf Release 12.2.0.1.0 - 64bit Production **binaries**.
@@ -42,6 +43,7 @@ SQL> exit
 ```
 Otherwise, contact your DBA
 
+[Top](#Table-of-Contents)
 <!-- ASSUMPTIONS SECTION END -->
 <!-- ASSUMPTIONS SECTION END -->
 <!-- ASSUMPTIONS SECTION END -->
@@ -52,6 +54,7 @@ Otherwise, contact your DBA
 <!-- SOURCE PREP SECTION START -->
 <!-- SOURCE PREP SECTION START -->
 
+<a name="primary-prep"></a>
 # Preparing Primary Source database
 First thing, we need to make sure our source database is in ARCHIVELOG mode.
 ```
@@ -200,7 +203,7 @@ $ grep -E '(\*\.compatible.*)|(\*\.open_cursors.*)|(\*\.pga_aggregate_target.*)|
 <!-- TARGET PREP SECTION START -->
 <!-- TARGET PREP SECTION START -->
 <!-- TARGET PREP SECTION START -->
-
+<a name="target-prep"></a>
 # Preparing Standby Target database
 
 #### Copying wallet and password file to standby
@@ -278,6 +281,18 @@ Same concept as above.
 
 ***NOTE THE DOMAIN NAME, FOR FILLING IN THE STANDBY PFILE BELOW***
 
+#### Grabbing ASM directory names
+Default OCI is just +DATA and +RECO, but I've seen DBAs who have +RECO4, +RECOC, etc... A quick and fast way to check is to just do this. **If for some reason this command doesn't work as Oracle user, change to Grid user.**
+```
+$ asmcmd ls -l
+```
+![](./screenshots/NOAHscreenshots/trgt_asm.png)
+
+In our case, our ASM data directory is '+DATA', and our ASM reco directory is "+RECO".
+
+***NOTE THE DATA / RECO LOCATION FOR FILLING IN THE STANDBY PFILE BELOW***
+
+<a name="pfile_create"></a>
 #### Creating our STANDBY pfile
 We need to create a pfile that we can use to startup our empty target (standby) database. Make sure your are doing this on the ***TARGET (STANDBY)*** database. These are the steps -:
 ```
@@ -324,6 +339,9 @@ Now, edit the below to fit your parameters and then paste it into the init{targe
 Don't forget to save and exit VI (:x or :wq), and make sure there are no extra lines or missing apostrophes!
 ![](./screenshots/NOAHscreenshots/trgt_initfile.png)
 
+#### Starting up the shell standby database with our created PFILE
+This is where it can get annoying, but Oracle's error handling
+
 [Top](#Table-of-Contents)
 <!-- TARGET PREP SECTION END -->
 <!-- TARGET PREP SECTION END -->
@@ -336,10 +354,8 @@ Don't forget to save and exit VI (:x or :wq), and make sure there are no extra l
 <!-- CONNECTIVITY SECTION START -->
 
 
-
-
-
 <!-- WIP
+<a name="conn-setup"></a>
 # Setting up connectivity between source and target
 In order to allow cross connection between our two databases, we're going to have to add entries to both tnsnames.ora in $ORACLE_HOME/network/admin. Go ahead and cat the tnsnames.ora, and you can get an idea of what it looks like.
 
