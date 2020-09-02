@@ -2,6 +2,7 @@ Manual Active Oracle Data Guard
 =======================================================
 
 # Table of Contents
+* [Why Active Data Guard?](#why)
 * [Assumptions](#Assumptions)
 * [Preparing Primary (Source) database](#primary-prep)
   * [Editing source Parameters](#primary-params)
@@ -26,6 +27,19 @@ Manual Active Oracle Data Guard
   * [Checking if PDBs are READ ONLY](#pdb_readonly)
   * [Checking for PDB violations](#pdb_violation)
   * [Creating a table on PRIMARY to see if it's replicated on STANDBY](#table_replication_test)
+
+<a name="why"></a>
+# Why Active Data Guard?
+Active Data Guard is when the standby database is in READ ONLY WITH APPLY.
+
+Some advantages -:
+*	A lot of companies use the Read Only standby to perform reporting queries, since they could potentially slow down the primary. One of my previous customers used this scenario with their PeopleSoft payroll database.
+*	Block corruptions are automatically repaired as long as the standby is running in real-time apply.
+*	To also reduce the load on a production, you can imitate RMAN backups from the standby instead of the primary.
+
+The Physical Standby can easily be opened if the Primary is lost. You first have to shut down the database, and bring it up in mount. You then issue a couple recover commands in SQL, and then activate the standby database. Once that’s all done, you can open it. You can read more about it on this website:
+https://dbaclass.com/article/how-to-open-standby-database-when-primary-database-is-lost/
+
 
 <!-- ASSUMPTIONS SECTION START -->
 <!-- ASSUMPTIONS SECTION START -->
@@ -551,6 +565,8 @@ SQL> !ps -ef | grep mrp
 ```
 ![](./screenshots/NOAHscreenshots/mrp_is_on.png)
 
+[Top](#Table-of-Contents)
+
 <a name="rman-logs"></a>
 #### Verifying log shipment from primary to standby
 First, go to the primary database and then we're going to do some log switches, and grab the sequence number that is writing on the primary. The standby should then be receiving and applying that sequence number.
@@ -594,8 +610,6 @@ $ tail -30 alert_{target_sid}.log
 <!-- Making sure data is replicated SECTION START -->
 <a name="data-replication"></a>
 # Making sure data is being replicated
-
-[Top](#Table-of-Contents)
 
 <a name="pdb_readonly"></a>
 #### Checking if PDBs are READ ONLY
