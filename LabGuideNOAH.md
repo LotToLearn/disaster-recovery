@@ -4,14 +4,28 @@ Manual Active Oracle Data Guard
 # Table of Contents
 * [Assumptions](#Assumptions)
 * [Preparing Primary (Source) database](#primary-prep)
+ * [Editing source Parameters](#primary-params)
+ * [Copying source wallet directory, and password files](#primary-wallet-pass)
+ * [Adding standby redo logs on source database](#primary-standby-logs)
+ * [Grabbing source parameters for our target (standby) pfile](#primary-pfile)
 * [Preparing Standby (Target) database](#target-prep)
-  * [Creating our STANDBY pfile](#pfile_create)
+ * [Copying wallet and password file to standby](#standby-copy-wallpass)
+ * [Creating an audit directory](#standby-audit)
+ * [Grabbing the DB domain](#standby-domain)
+ * [Grabbing ASM directory names](#standby-asm)
+ * [Creating our STANDBY pfile](#pfile_create)
+ * [Testing pfile, and creating spfile](#pfile_test)
 * [Setting up connectivity](#conn-setup)
+ * [How to make the two databases able to connect to each other](#db_conn)
+ * [Testing database connectivity](#test_db_conn)
 * [Running active duplicate from primary](#rman-dupe)
 * [Post active duplication steps](#rman-post-dupe)
-  * [Starting MRP](#rman-mrp)
-  * [Verifying log shipment](#rman-logs)
+ * [Starting MRP](#rman-mrp)
+ * [Verifying log shipment](#rman-logs)
 * [Making sure data is being replicated](#data-replication)
+ * [Checking if PDBs are READ ONLY](#pdb_readonly)
+ * [Checking for PDB violations](#pdb_violation)
+ * [Creating a table on PRIMARY to see if it's replicated on STANDBY](#table_replication_test)
 
 <!-- ASSUMPTIONS SECTION START -->
 <!-- ASSUMPTIONS SECTION START -->
@@ -68,6 +82,7 @@ SQL> select log_mode from v$database;
 ```
 ![](./screenshots/NOAHscreenshots/src_is_arch.png)
 
+<a name="primary-params"></a>
 #### Editing source Parameters
 Next, we need to enable force logging and flashback on parameters. The parameters may already be enabled, which will give you an error -- but that's okay.
 ```
@@ -95,6 +110,9 @@ ALTER SYSTEM SET STANDBY_FILE_MANAGEMENT=AUTO;
 ```
 ![](./screenshots/NOAHscreenshots/src_change_params.png)
 
+[Top](#Table-of-Contents)
+
+<a name="primary-wallet-pass"></a>
 #### Copying source wallet directory, and password files
 By default, OCI encrypts the Database. This means we have to copy both the password file, as well as the contents of the wallet directory from our Source database, and add it to our target database. I am going to copy it to a shared NFS between the two servers. There's other ways like WinSCP, or using Linux Secure Copy (scp).
 
@@ -124,6 +142,9 @@ $ cp orapw{source_sid} /ATX/NOAH/DG_WALLET/orapw{target_sid}
 ```
 ![](./screenshots/NOAHscreenshots/ora_pw_src_cp.png)
 
+[Top](#Table-of-Contents)
+
+<a name="primary-standby-logs"></a>
 #### Adding standby redo logs on source database
 You need to create standby redo logs on your source for maximum protection. Without creating standby logs, the standby will apply archived logs once they are created by RFS. Since standby cannot apply incomplete archive logs, you can see where the issue arises. [Learn more about it here](https://dbaclass.com/article/standby-redologs-oracle-dataguard/)
 
@@ -166,6 +187,9 @@ SQL> select b.thread#, a.group#, a.member, b.bytes FROM v$logfile a, v$standby_l
 ```
 ![](./screenshots/NOAHscreenshots/src_redo_add_success.png)
 
+[Top](#Table-of-Contents)
+
+<a name="primary-pfile"></a>
 #### Grabbing source parameters for our target (standby) pfile
 Last thing, we need to create a pfile from spfile on source (PRIMARY) and grab some of the parameters for our target (STANDBY) pfile.
 
@@ -211,6 +235,8 @@ $ grep -E '(\*\.compatible.*)|(\*\.open_cursors.*)|(\*\.pga_aggregate_target.*)|
 <a name="target-prep"></a>
 # Preparing Standby Target database
 
+
+<a name="standby-copy-wallpass"></a>
 #### Copying wallet and password file to standby
 This is pretty straight forward, just copy the files from your NFS, Desktop, or /tmp/ folder into their correct places.
 
@@ -252,6 +278,9 @@ $ ls -ltr *orapw*
 
 ![](./screenshots/NOAHscreenshots/trgt_orapwcpy.png)
 
+[Top](#Table-of-Contents)
+
+<a name="standby-audit"></a>
 #### Creating an audit directory
 You need an audit directory, OCI creates one already for our database but you can create and directory and specify it in the pfile we're going to make below. Just note down the directory, in our case I'm going to use /u01/app/oracle/admin/NOAHDR_iad38f/adump. Since I already have it, I'll just show a screenshot of running ls on it.
 ```
@@ -261,6 +290,9 @@ $ mkdir -m 777 $ORACLE_BASE/admin/target_unqname/adump
 
 ***NOTE THE DIRECTORY DOWN YOU MADE, FOR FILLING IN THE STANDBY PFILE BELOW***
 
+[Top](#Table-of-Contents)
+
+<a name="standby-domain"></a>
 #### Grabbing the DB domain
 Now, the last parameter we need to grab is the db_domain. If you're on OCI, and the two databases are in the same subnet you can just use the db_domain parameter on the source. There are a few ways to grab it regardless, so I'll show you that.
 
@@ -286,6 +318,9 @@ Same concept as above.
 
 ***NOTE THE DOMAIN NAME, FOR FILLING IN THE STANDBY PFILE BELOW***
 
+[Top](#Table-of-Contents)
+
+<a name="standby-asm"></a>
 #### Grabbing ASM directory names
 Default OCI is just +DATA and +RECO, but I've seen DBAs who have +RECO4, +RECOC, etc... A quick and fast way to check is to just do this. **If for some reason this command doesn't work as Oracle user, change to Grid user.**
 ```
@@ -296,6 +331,8 @@ $ asmcmd ls -l
 In our case, our ASM data directory is '+DATA', and our ASM reco directory is "+RECO".
 
 ***NOTE THE DATA / RECO LOCATION FOR FILLING IN THE STANDBY PFILE BELOW***
+
+[Top](#Table-of-Contents)
 
 <a name="pfile_create"></a>
 #### Creating our STANDBY pfile
@@ -344,6 +381,9 @@ Now, edit the below to fit your parameters and then paste it into the init{targe
 Don't forget to save and exit VI (:x or :wq), and make sure there are no extra lines or missing apostrophes!
 ![](./screenshots/NOAHscreenshots/trgt_initfile.png)
 
+[Top](#Table-of-Contents)
+
+<a name="pfile_test"></a>
 #### Testing pfile, and creating spfile
 This is where it can get annoying, but Oracle's error handling is pretty good. We're going to use the pfile we just created to startup the database in nomount. We are then going to create an spfile into our ASM data directory from the pfile.
 
@@ -405,6 +445,10 @@ $ cat $ORACLE_HOME/network/admin/tnsnames.ora
 ```
 ![](./screenshots/NOAHscreenshots/cat_tns_trgt.png)
 
+
+[Top](#Table-of-Contents)
+
+<a name="db_conn"></a>
 #### How to make the two databases able to connect to each other
 Now that you have ran cat on both tnsnames.ora, you can edit each one accordingly. For example, on source you will add the target entry below, and vice versa. To do this, you can use vi. Once you edit them, it should look similar to the screenshot below.
 
@@ -420,6 +464,9 @@ TARGET
 
 ![](./screenshots/NOAHscreenshots/trgt_tns_add_src.png)
 
+[Top](#Table-of-Contents)
+
+<a name="test_db_conn"></a>
 #### Testing database connectivity
 ##### TESTING CONNECTIVITY FROM TARGET (STANDBY) TO SOURCE (PRIMARY)!!!!
 ***AKA, MAKE SURE YOU'RE RUNNING THIS ONE ON THE TARGET DATABASE***
@@ -453,7 +500,7 @@ If you can connect, configurations... you're really close! If not, it's always g
 <!-- DUPLICATION SECTION START -->
 <a name="rman-dupe"></a>
 # Running active duplicate from primary
-### Make sure you're on the SOURCE (PRIMARY) database!!
+#### Make sure you're on the SOURCE (PRIMARY) database!!
 You may see "target" and get confused, but just follow the syntax. Basically, you target into your current source database and then set the target as your auxiliary all in this one liner.
 ```
 $ rman target sys/[password]@[source_unqname] auxiliary sys/[password]@[target_unqname]
@@ -547,6 +594,129 @@ $ tail -30 alert_{target_sid}.log
 <!-- Making sure data is replicated SECTION START -->
 <a name="data-replication"></a>
 # Making sure data is being replicated
+
+[Top](#Table-of-Contents)
+
+<a name="pdb_readonly"></a>
+#### Checking if PDBs are READ ONLY
+
+On our source, there is one PDB named "SRC_PDB", so let's check our standby.
+
+***ON STANDBY***
+```
+$ sqlplus / as sysdba
+SQL> sho pdbs
+```
+![](./screenshots/NOAHscreenshots/stby_pdbs_check.png)
+
+As you can see it was replicated, this is good obviously. Notice it's in READ ONLY mode, this is because this in an Active Data Guard (which means the database is always a read only version.)
+
+[Top](#Table-of-Contents)
+
+<a name="pdb_violation"></a>
+##### Checking for PDB violations (we know there are none since it's not restricted, but this is a good query to know.)
+```
+$ sqlplus / as sysdba
+SQL > alter session set container={PDB_NAME};
+SQL> set lines 200
+SQL> set lines 999
+SQL> col message format a70
+SQL> col status format a15
+SQL> col type format a10
+SQL> col name format a10
+SQL> select name, cause, type, message, status from pdb_plug_in_violations where type='ERROR' and status='PENDING';
+```
+![](./screenshots/NOAHscreenshots/pdb_pending_violations.png)
+
+[Top](#Table-of-Contents)
+
+<a name="table_replication_test"></a>
+##### Creating a table on PRIMARY to see if it's replicated on STANDBY
+
+***ON PRIMARY***
+
+First, let's check free space on a tablespace, and create a table inside one with some space. This is a good query to have as well.
+
+```
+$ sqlplus / as sysdba
+SQL > alter session set container={PDB_NAME};
+
+select
+   fs.tablespace_name                          "Tablespace",
+   (df.totalspace - fs.freespace)              "Used MB",
+   fs.freespace                                "Free MB",
+   df.totalspace                               "Total MB",
+   round(100 * (fs.freespace / df.totalspace)) "Pct. Free"
+from
+   (select
+      tablespace_name,
+      round(sum(bytes) / 1048576) TotalSpace
+   from
+      dba_data_files
+   group by
+      tablespace_name
+   ) df,
+   (select
+      tablespace_name,
+      round(sum(bytes) / 1048576) FreeSpace
+   from
+      dba_free_space
+   group by
+      tablespace_name
+   ) fs
+where
+   df.tablespace_name = fs.tablespace_name
+   order by 1;
+```
+![](./screenshots/NOAHscreenshots/free_tablespace.png)
+
+If you need to add space to a tablespace, use the below -:
+```
+$ sqlplus / as sysdba
+SQL > alter session set container={PDB_NAME};
+
+ALTER TABLESPACE tablespace_name
+    ADD DATAFILE 'path_to_datafile'
+    SIZE size;
+```
+
+We're going to use **AUSTIN_SHOPS** since there's a lot of free space there.
+
+***ON PRIMARY, YOU CAN COPY THE WHOLE STATEMENT FROM CREATE TABLE TO COMMIT;***
+```
+$ sqlplus / as sysdba
+SQL > alter session set container={PDB_NAME};
+
+CREATE TABLE DG_LAB_TEST (
+  test NUMBER(9)
+)
+TABLESPACE AUSTIN_SHOPS;
+
+insert into DG_LAB_TEST values(1);
+insert into DG_LAB_TEST values(2);
+insert into DG_LAB_TEST values(3);
+
+commit;
+```
+![](./screenshots/NOAHscreenshots/prim_table_made.png)
+
+***ON PRIMARY***
+```
+SQL > select * from DG_LAB_TEST;
+```
+![](./screenshots/NOAHscreenshots/prim_select_all.png)
+
+Now, let's check on the Standby (wait a minute or so, usually ~10 seconds depending on latency.)
+
+***ON STANDBY***
+```
+$ sqlplus / as sysdba
+SQL > alter session set container={PDB_NAME};
+SQL > select * from DG_LAB_TEST;
+```
+![](./screenshots/NOAHscreenshots/stby_select_all.png)
+
+
 
 [Top](#Table-of-Contents)
 <!-- Making sure data is replicated SECTION END -->
