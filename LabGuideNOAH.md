@@ -27,6 +27,11 @@ Manual Active Oracle Data Guard
   * [Checking if PDBs are READ ONLY](#pdb_readonly)
   * [Checking for PDB violations](#pdb_violation)
   * [Creating a table on PRIMARY to see if it's replicated on STANDBY](#table_replication_test)
+* [Data Broker and disaster simulation](#data-broker)
+  * [Enabling the broker](#data-enable-broker)
+  * [Switchover](#data-switchover)
+  * [Failover](#data-failover)
+  * [Snapshot Standby](#data-snapshot)
 
 <a name="why"></a>
 # Why Active Data Guard?
@@ -738,3 +743,230 @@ SQL > select * from DG_LAB_TEST;
 <!-- Making sure data is replicated SECTION END -->
 
 <!-- =========================================================================================== -->
+
+<!-- broker SECTION END -->
+<!-- broker SECTION END -->
+<!-- broker SECTION END -->
+
+<a name="data-broker"></a>
+# Data Broker and disaster simulation
+The last thing we need to do is activate Data Broker. This is a tool that allows for easy switchover, failover, flashback, and turning your standby into a snapshot. It's also mainly used for seeing things like transport lag, because ideally you're not going to worry about recovery until it happens. The only thing you'll really need to be interested in is turning your database into a snapshot for testing.
+
+
+<a name="data-enable-broker"></a>
+##### Enabling the broker
+You will have to run this SQL statement on ***both the standby and primary***
+```
+$ sqlplus / as sysdba
+SQL > ALTER SYSTEM SET dg_broker_start=true;
+```
+![](./screenshots/NOAHscreenshots/enable_dg_broker.png)
+
+Next, we will need to register the broker with the primary, and link the standby. We can then check to see if it was all successful.
+
+***RUN ALL OF THIS IN THE PRIMARY!!***
+```
+$ dgmgrl sys/[password]@[source_unqname]
+DGMGRL >  CREATE CONFIGURATION lab_dg AS PRIMARY DATABASE IS [source_unqname] CONNECT IDENTIFIER IS [source_unqname];
+DGMGRL >  ADD DATABASE [target_unqname] AS CONNECT IDENTIFIER IS [target_unqname] MAINTAINED AS PHYSICAL;
+DGMGRL > ENABLE CONFIGURATION;
+DGMGRL > SHOW CONFIGURATION;
+DGMGRL > show database [source_unqname];
+DGMGRL > show database [target_unqname];
+```
+![](./screenshots/NOAHscreenshots/register_broker.png)
+
+[Top](#Table-of-Contents)
+
+<a name="data-switchover"></a>
+##### Performing a switchover
+Now we can simulate a switchover, it's fairly simple. Run these commands, and then when you connect to the **ORIGINAL primary** it will be in read only mode.
+***RUN THIS ON THE PRIMARY!!!***
+```
+$ dgmgrl sys/[password]@[source_unqname]
+DGMGRL >  CREATE CONFIGURATION lab_dg AS PRIMARY DATABASE IS [source_unqname] CONNECT IDENTIFIER IS [source_unqname];
+DGMGRL >  ADD DATABASE [target_unqname] AS CONNECT IDENTIFIER IS [target_unqname] MAINTAINED AS PHYSICAL;
+DGMGRL >  switchover to [target_unqname];
+DGMGRL >  exit
+$ sqlplus / as sysdba
+SQL > sho pdbs;
+SQL > exit
+```
+![](./screenshots/NOAHscreenshots/switchover_prim_stby.png)
+
+You can see they're now swapped with these commands
+
+***RUN THIS ON THE ORIGINAL PRIMARY!!!***
+```
+$ dgmgrl sys/[password]@[target_unqname]
+DGMGRL > show database [source_unqname];
+DGMGRL > show database [target_unqname];
+```
+![](./screenshots/NOAHscreenshots/orig_prim_is_stby.png)
+
+Now, let's switch back to the ORIGINAL PRIMARY
+
+***RUN THIS ON YOUR CURRENT BROKER SESSION***
+```
+DGMGRL > switchover to [source_unqname];
+DGMGRL > show database [target_unqname];
+DGMGRL > show database [source_unqname];
+DGMGRL > exit
+```
+![](./screenshots/NOAHscreenshots/switchover_back_to_ogprim.png)
+
+
+[Top](#Table-of-Contents)
+
+<a name="data-failover"></a>
+##### Performing a Failover
+This would be if the primary got shut off, or crashed. For the simulation we’re just going to shut down the primary database.
+
+***RUN THIS ON THE PRIMARY!!!***
+```
+$ sqlplus / as sysdba
+SQL> shut immediate
+SQL> exit
+```
+![](./screenshots/NOAHscreenshots/shut_db_down.png)
+
+Now, let's connect to the standby via broker on the primary host.
+
+***RUN THIS ON THE PRIMARY!!!***
+```
+$ dgmgrl sys/[password]@[target_unqname]
+DGMGRL > failover to [target_unqname];
+DGMGRL > show database [source_unqname];
+DGMGRL > show database [target_unqname];
+```
+![](./screenshots/NOAHscreenshots/failover_to_standby.png)
+
+Now, since we enabled flashback when we first started our Data Guard build, it's very simple to reinstate our original primary database. Follow these steps, first we startup the original primary, then we reinstate through broker.
+
+***RUN THIS ON THE ORIGINAL PRIMARY!!!***
+```
+$ sqlplus / as sysdba
+SQL > startup mount
+SQL > exit
+$ dgmgrl sys/[password]@[target_unqname]
+DGMGRL > REINSTATE DATABASE [source_unqname];
+DGMGRL > show database [source_unqname];
+DGMGRL > show database [target_unqname];
+```
+![](./screenshots/NOAHscreenshots/reinstated_prim.png)
+
+Our original primary is now our standby, so we have to switchover to make it the new primary.
+
+***Stay in the same broker session, don’t exit broker!!!***
+```
+DGMGRL >  switchover to [source_unqname];
+```
+![](./screenshots/NOAHscreenshots/switchover_to_prim.png)
+
+Now, our standby will not be able to determine lag, this is because we need to re-enable broker on the ORIGINAL STANDBY. Run this on the same broker you’re in, and you can see what I mean.
+```
+DGMGRL >  show database [target_unqname];
+```
+![](./screenshots/NOAHscreenshots/post_failover_lag_down.png)
+
+***Go back to the ORIGINAL STANDBY and re-enable broker through SQL***
+```
+$ sqlplus / as sysdba
+SQL > ALTER SYSTEM SET dg_broker_start=true;
+```
+![](./screenshots/NOAHscreenshots/enable_dg_broker.png)
+
+Now, go back to the ORIGINAL PRIMARY server, and connect to it in broker, and you can see our standby is applying, and we can see the lag.
+
+***RUN THIS ON THE ORIGINAL PRIMARY!!!***
+```
+$ dgmgrl sys/[password]@[source_unqname]
+DGMGRL > show database [target_unqname];
+```
+![](./screenshots/NOAHscreenshots/lag_is_fixed_failover.png)
+
+
+**If you didn’t have alter database flashback ON;** parameter set **(you should, It was the first thing I made you do,)** you will have to re-create the whole standby. But you can just drop the database on standby, and run the duplicate command again – no need to do all the other steps.
+
+[Top](#Table-of-Contents)
+
+<a name="data-snapshot"></a>
+##### Turning the standby into a snapshot of the primary for testing
+You can turn your standby into a read-write, and use it as a lab because it takes a snapshot of when you did it. You can edit tables, add tables, experiment, etc… Once you are done, you can convert the standby back into a physical standby and all changes will be lost.
+
+***Let’s convert our standby, run this on the PRIMARY***
+```
+$ dgmgrl sys/[password]@[source_unqname]
+DGMGRL > CONVERT DATABASE [target_unqname] TO SNAPSHOT STANDBY;
+```
+
+Now let’s go on our **original standby** and see if the PDBs are read-write
+
+***RUN THIS ON THE ORIGINAL STANDBY!!!***
+```
+$ sqlplus / as sysdba
+SQL > sho pdbs
+```
+![](./screenshots/NOAHscreenshots/pdb_is_read_snap.png)
+
+
+Cool, they are – lets go into the PDB and create a table.
+
+***RUN THIS ON THE ORIGINAL STANDBY!!!***
+```
+SQL > alter session set container={PDB_NAME};
+SQL > create table snapshot_test ( test NUMBER(5));.
+SQL > insert into snapshot_test values(1);
+SQL > commit;
+SQL > select * from snapshot_test;
+```
+![](./screenshots/NOAHscreenshots/snapshot_crt_table.png)
+
+Now, since we’re done we’re going to convert it back to a physical standby to revert the changes, and sync up with our primary.
+
+***RUN THIS ON THE ORIGINAL PRIMARY, BROKER INTO THE PRIMARY***
+```
+$ dgmgrl sys/[password]@[source_unqname]
+DGMGRL > CONVERT DATABASE [target_unqname] TO PHYSICAL STANDBY;
+```
+![](./screenshots/NOAHscreenshots/snap_to_phys.png)
+
+Once that is done, let’s see the configuration to verify
+```
+DGMGRL > SHOW CONFIGURATION;
+```
+![](./screenshots/NOAHscreenshots/post_snap_config.png)
+
+Notice our lag isn't determined, this is because we need to re-enable broker on our ORIGINAL STANDBY.
+
+***Go back to the ORIGINAL STANDBY and re-enable broker through SQL***
+```
+$ sqlplus / as sysdba
+SQL > ALTER SYSTEM SET dg_broker_start=true;
+```
+![](./screenshots/NOAHscreenshots/enable_dg_broker.png)
+
+***Now, go back to the ORIGINAL PRIMARY and check***
+```
+$ dgmgrl sys/[password]@[source_unqname]
+DGMGRL > SHOW CONFIGURATION;
+DGMGRL > show database [target_unqname];
+```
+![](./screenshots/NOAHscreenshots/post_snap_lag_working.png)
+
+***Go back to the ORIGINAL STANDBY and verify PDB is read only***
+```
+$ sqlplus / as sysdba
+SQL > sho pdbs
+```
+![](./screenshots/NOAHscreenshots/stby_pdb_readonly_snap.png)
+
+***Let's see if the table from our post snapshot was deleted***
+```
+SQL > alter session set container={PDB_NAME};
+SQL > select * from snapshot_test;
+```
+![](./screenshots/NOAHscreenshots/snapshot_table_gone.png)
+
+
+# ALL DONE WITH LAB!
