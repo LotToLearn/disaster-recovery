@@ -1,5 +1,7 @@
 Manual Active Oracle Data Guard
 =======================================================
+All mentions of pricing in this guide are for discussion purposes only. It is by no means a license or promise to license products or services or a pricing guarantee. This in no way represents offical Oracle documentation 
+
 
 # Table of Contents
 * [Why Active Data Guard?](#why)
