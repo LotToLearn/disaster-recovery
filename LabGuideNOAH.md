@@ -1,6 +1,6 @@
 Manual Active Oracle Data Guard
 =======================================================
-This in no way represents offical Oracle documentation, and  views expressed are my own and do not represent anyone else
+### This in no way represents offical Oracle documentation, and  views expressed are my own and do not represent anyone else
 
 
 # Table of Contents
